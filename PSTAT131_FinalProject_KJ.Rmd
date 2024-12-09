@@ -1,0 +1,893 @@
+---
+title: "Smartphone 5G Prediction"
+subtitle: "Using Machine Learning Models to Predict if a Smartphone has 5G Capabilities"
+
+author: "Kira Jackson"
+date: "UCSB Spring 2024"
+output:
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    df_print: paged
+    theme: yeti
+    highlight: tango
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(car)
+library(tidyverse)
+library(tidymodels)
+library(corrplot)
+library(ggplot2)
+library(workflows)
+library(discrim)
+library(poissonreg)
+library(corrr)
+library(kknn)
+library(ggthemes)
+library(visdat)
+library(modeldata)
+library(ranger)
+library(naniar)
+library(themis)
+library(vip)
+library(forcats)
+library(magrittr)
+library(kernlab)
+library(ISLR)
+library(ISLR2)
+library(glmnet)
+library(xgboost)
+library(janitor)
+library(rpart)
+library(dplyr)
+tidymodels_prefer()
+```
+
+```{r echo=FALSE, out.width = "50%", fig.align = "center"}
+knitr::include_graphics("/Users/kira1/Desktop/download.jpg")
+```
+
+\section{Introduction}
+# Introduction
+In an era where technology is rapidly advancing, the integration of 5G connectivity into smartphones has become a pivotal feature for consumers and manufacturers alike. The primary focus of this project lies in predicting whether a given smartphone possesses 5G connectivity or not. 
+
+The dataset used in this project, called “Smartphones_Dataset,” is sourced from Kaggle (https://www.kaggle.com/datasets/informrohit1/smartphones-dataset), and was updated in 2024. The Smartphones dataset comprises 210 rows and 26 columns, containing information scraped from the web on various attributes of different smartphone models. We will be implementing multiple machine learning techniques to yield the most accurate model for this binary classification problem.
+
+\subsection{What is 5G Connectivity?}
+## What is 5G Connectivity?
+
+5G connectivity refers to the fifth-generation wireless technology that offers significantly faster data speeds, greater reliability, and enhanced capacity compared to previous generations. Its importance lies in its transformative potential to revolutionize various aspects of society and industry as it is 100 times faster than 4G networks. By providing a foundation for innovation and connectivity, 5G enables new possibilities and improves quality of life for individuals and communities alike.
+
+\subsection{Inspiration and Motive}
+## Inspiration and Motive
+My past summer internships focused on enhancing the design of RF filters which provided me with valuable insights into the intricate world of wireless communication systems. Witnessing the innovation and efficiency in the field of RF engineering firsthand sparked my interest in exploring this topic for my project. By drawing upon my internship insights and combining them with machine learning techniques, I aim to have a better understanding of the ever-evolving technology landscape.
+
+\subsection{Project Outline}
+## Project Outline
+To begin, we will load in our dataset and do initial data manipulation and cleaning. From there, we will perform some exploratory data analysis to gain further insight into our variables and their relevance. Our goal is to use predictor variables to predict a binary class “Yes”, which indicates a response variable detailing if the smartphone is a 5G model. We will then perform a training/test split on our data, make a recipe, and set folds for the 10-fold cross validation we will implement. Random Forest, K Nearest Neighbors, Decision Tree, Support Vector Machine, Logistic Regression, Lasso Regression, Linear Discriminant Analysis, and Quadratic Discriminant Analysis are all the models used to model the training data. Depending on which model performs the best, we will then fit to our testing data set and analyze how effective our model is.
+
+\section{Exploratory Data Analysis}
+# Exploratory Data Analysis
+
+\subsection{Exploring & Tidying Data}
+## Exploring & Tidying Data
+
+```{r}
+# Loading the data
+smartphones_data <- read.csv("/Users/kira1/Downloads/smartphones_cleaned_v6.csv")  
+
+# Cleaning  variable names
+smartphones_clean <- smartphones_data %>%
+  clean_names() 
+
+# Mutating Data
+smartphones_clean <- smartphones_clean %>%
+  mutate(has_5g = ifelse(has_5g == "True", "Yes", "No")) %>%
+  mutate(has_nfc = ifelse(has_nfc == "True", 1, 0 )) %>%
+  mutate(has_ir_blaster = ifelse(has_ir_blaster == "True", 1, 0))
+smartphones_clean$has_5g <- factor(smartphones_clean$has_5g)
+```
+
+First we load the dataset from a CSV file and clean the variable names for consistency and readability. I decided to modify certain variables in the dataset: `has_5g` is converted to a factor with levels "Yes" and "No" to indicate the presence or absence of 5G connectivity, while `has_nfc`  and `has_ir_blaster` are converted to a binary numeric variable so they can be used in our recipe later on without being dummy coded. 
+
+
+Next, we want to identify if the dataset has any missing values.
+
+```{r, warning=F, fig.width=8}
+vis_miss(smartphones_clean)
+```
+```{r}
+# removing NA values
+smartphones_clean <- drop_na(smartphones_clean)
+
+# removing columns
+smartphones_clean <- smartphones_clean %>% 
+  select(-c(extended_upto,
+        model, fast_charging_available, os, extended_memory_available
+         ))
+```
+```{r}
+sum(is.na(smartphones_clean))
+```
+
+From our plot above we can see that there are indeed missing values present. However, since the percentage of missing data is very small (3.4%), I decided to remove all rows with missing data and the column, `extended_upto`, since almost half of the data is missing. I also decided to remove the columns `model`, `fast_charging_available`, `os`, and `extended_memory_availabe` since their respective values seem to be mostly the same throughout the data set after removing missing data. Now we can proceed as there are no longer missing values!
+
+Let’s take quick look at our dataset by displaying the first 6 rows before we begin using the data.
+
+```{r}
+head(smartphones_clean)
+```
+
+\subsection{Visual EDA}
+## Visual EDA
+
+To gain deeper insights into the distribution of our response variable and the relationships with our predictors, we will create an output variable plot and a correlation matrix. These visualizations will help us identify any potential correlations between our predictor variables. We will also generate visualization plots to observe the impact of specific variables of interest on our response variable. 
+
+### 5G Connectivity Distribution
+```{r, fig.width=8}
+# 5G Connectivity Distribution
+smartphones_clean %>%
+  ggplot(aes(x = has_5g, fill = has_5g)) +
+  geom_bar(color="black") +
+  theme_minimal() +
+  labs(
+    title = "Count of Smartphones with 5G",
+    x = "5G",
+    y = "Count"
+  ) + 
+  scale_fill_manual(values = c("#AEE1F0", "#A8E9BE")) 
+```
+
+As an initial step, we can explore the distribution of smartphones with 5G connectivity. The number of 5G models are lower, indicating that this advanced feature is still emerging in the market and has not yet reached widespread adoption. This lower prevalence of 5G-enabled devices may be due to several factors, including higher production costs and limited availability of 5G infrastructure. However, in the near future I expect more smartphones to be 5G models as there is an increasing demand.
+
+### Variable Correlation Plot 
+
+Next, we will perform a correlation plot to visualize how related our variables are.
+
+```{r, fig.width=8, fig.height=8}
+smartphones_clean %>%
+  select(where(is.numeric)) %>%
+  cor() %>%
+  corrplot(diag=F, type="lower")
+```
+
+We choose to exclude categorical variables in the correlation matrix plot since correlation coefficients are calculated for numeric variables. As we observed the correlation matrix plot, we noticed that most of our variables are positively correlated with each other or if they are negatively correlated it is a very weak correlation. `rating` has positive correlations with all other variables, especially the strongest positive correlations with `ram_capacity`. Additionally, `ram_capacity` has a strong positive with `internal_memory`. Although weak,  `has_nfc` and `has_ir_blaster` have the strongest negative correlation. 
+
+To ensure our models do not run into multicolinearity errors we can use the `vif()` function to calculate the Variance Inflation Factor for each predictor variable in the fitted logistic regression model.
+
+```{r}
+# Ensure 'has_5g' is numeric
+smartphones_clean$has_5g <- as.numeric(smartphones_clean$has_5g)
+
+
+# Fit the logistic regression model
+fit <- glm(has_5g ~ rating + price + has_nfc + has_ir_blaster + num_cores +
+                              processor_speed	+ battery_capacity + ram_capacity +
+                               internal_memory	+ screen_size	+ 
+                               primary_camera_rear	+ primary_camera_front	+ 
+                               resolution_width	+ resolution_height,
+           data = smartphones_clean)
+
+# Calculate VIF
+vif_values <- vif(fit)
+print(vif_values)
+
+# Convert data back
+smartphones_clean <- smartphones_clean %>%
+  mutate(has_5g = ifelse(has_5g == 2, "Yes", "No")) 
+smartphones_clean$has_5g <- factor(smartphones_clean$has_5g)
+```
+
+
+As we can see our most of the VIF values are low, except for `rating`, which has a really high value of 11.457576. Therefore, we will not be including this variable in our recipe. We also have to make sure our response variable is converted back to a factor with "Yes" and "No".
+
+### Distribution of Rating
+
+The distribution of rating plot provides a clear visualization of how frequently each rating value appears among the smartphones in the dataset. By segmenting the data based on 5G connectivity, we can observe distinct patterns in how 5G-capable smartphones are rated compared to those without 5G.
+
+```{r, fig.width=8}
+smartphones_clean %>%
+  dplyr::select('rating', 'has_5g') %>%
+   dplyr::mutate(rating = cut(rating, breaks = 
+                             seq(min(rating), max(rating), by = 1),
+                             include.lowest = TRUE)) %>%
+  group_by(rating) %>%
+  na.omit(rating) %>%
+  ggplot(aes(rating)) +
+  geom_bar(aes(fill = has_5g), color="black") +
+  theme(axis.text.x = element_text(angle = 90)) +
+  scale_fill_manual(values = c("#AEE1F0", "#A8E9BE")) +
+  labs(
+    title = "Distribution of Rating",
+    x = "Rating",
+    y = "Count"
+  )
+```
+
+From the plot, it is evident that higher ratings are more commonly associated with smartphones that have 5G connectivity. This trend suggests that consumers tend to rate 5G-enabled smartphones more favorably, likely due to the enhanced performance, faster data speeds, and advanced features that 5G technology offers. However, the plot also shows that there are still numerous smartphones without 5G connectivity that receive high ratings. This indicates that while 5G is a desirable feature, it is not the sole determinant of a smartphone's quality or consumer satisfaction. 
+
+
+#### Distribution of 5G Capability by Brand
+
+Our next graph offers a comprehensive visualization of the frequency at which each brand name appears in the dataset, segmented by 5G connectivity. 
+
+```{r, fig.width=8}
+smartphones_clean %>%
+ggplot(aes(x = brand_name, fill = has_5g)) +
+  geom_bar(position = "dodge", color="black") +
+  labs(title = "Distribution of 5G Capability by Brand",
+       x = "Brand Name",
+       y = "Count",
+       fill = "Has 5G") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_fill_manual(values = c("#AEE1F0", "#A8E9BE")) 
+```
+
+As we can see from this graph, Samsung and Xiami both have high counts of 5G smartphones, suggesting that they are leaders in adopting 5G technology. However, they still have more non-5G models which could either indicate a focus on more affordable models or they are catering to a diverse customer base. Oppo, Poco, and Iqobo are brands that has a higher count of 5G smartphones than non-5G models, and Honor only produces 5G smartphones. It was interesting to dive deeper into the brands this dataset holds as I have never heard of some of these brands and was also surprised that Apple was excluded from this data!
+
+\section{Setting Up Models}
+# Setting up Models
+Now that we have a general idea of how our variables impact whether a smartphone has 5G connectivity or not, we can being our train / test split, create our recipe, and establish cross validation to help set up our models.
+
+\subsection{Train/Test Split}
+## Train/Test Split
+
+To begin setting up our models, we first need to split our data into separate datasets: one used for training our models and one used when we actually test our model at the end. Our very first step is setting our seed so that the random split will be reproduced every time. Then, we will perform a split on our data by stratifying on our response variable, `has_5g`. I used a split of 75% and 25% to maximize the data that we have to train the model since we do not have that many observations.
+
+```{r}
+set.seed(123)
+smartphones_split <- initial_split(smartphones_clean, strata = has_5g, prop = 0.75)
+
+smartphones_train <- training(smartphones_split)
+smartphones_test <- testing(smartphones_split)
+```
+
+The dimensions of our training set:
+```{r}
+dim(smartphones_train)
+```
+
+
+\
+The dimensions of our testing set: 
+```{r}
+dim(smartphones_test)
+```
+\
+\subsection{Codebook}
+## Codebook
+After removing unnecessary variables, we can get a better understanding of what each variable is. The variables that I selected for the true data set and will be using in my model recipe to predict 5G connectivity are:\
+
+`brand_name`: The name of the smartphone's manufacture          \
+`price`: The cost of the smartphone in the specified currency   \            
+`rating`: The user or expert rating of the smartphone on a scale from 0-100  \          
+`has_5g`: Indicates whether the smartphone supports 5G connectivity (Yes/No)   \           
+`has_nfc`: Indicates whether the smartphone has Near Field Communication (NFC) capability (1 for Yes, 0 for No) \
+`has_ir_blaster`: Indicates whether the smartphone is equipped with an infrared blaster (1 for Yes, 0 for No) \  
+`processor_brand`: The brand of the smartphone's processor \
+`num_cores`: The number of cores in the smartphone's processor          \
+`processor_speed`: The clock speed of the smartphone's processor, usually measured in GHz \
+`battery_capacity`: The capacity of the smartphone's battery \    
+`fast_charging`: The power of the fast charging capability of the smartphone        \
+`ram_capacity`: The amount of Random Access Memory (RAM) in the smartphone        \
+`internal_memory`: The storage capacity of the smartphone \
+`screen_size`: The diagonal size of the smartphone's screen \
+`refresh_rate`: The refresh rate of the smartphone's screen \
+`num_rear_cameras`: The number of cameras on the back side of the smartphone \
+`num_front_cameras`: The number of cameras on the front side of the smartphone \
+`primary_camera_rear`: The resolution of the primary back camera \
+`primary_camera_front`: The resolution of the primary front camera \
+`resolution_width`: The width resolution of the smartphone's screen \  
+`resolution_height`: The height resolution of the smartphone's screen \ 
+
+
+\subsection{Recipe Building}
+## Recipe Building
+
+```{r}
+smartphones_recipe <- recipe(has_5g ~ price + has_nfc + has_ir_blaster +
+                              processor_speed	+ battery_capacity + 
+                               fast_charging + internal_memory	+ screen_size	+ 
+                               refresh_rate	+ num_rear_cameras	+ 
+                               primary_camera_rear	+ primary_camera_front	+ 
+                               resolution_width	+ resolution_height, data=smartphones_clean) %>%
+  step_scale(all_predictors()) %>% 
+  step_center(all_predictors())
+```
+
+
+We will use our predictor and response variables to build the recipe that we will use for all of the models. Essentially, each variable that we have included will be used to predict our response variable of `has_5g`. As explained above we are not going to include `ratings` in the recipe. I decided to exclude `brand_name` and `processor_brand` in the recipe because I wanted to focus on numerical variables. Furthermore, `num_cores` and `num_front_cameras` were not included because their respective data was almost all the same.
+
+Lastly, we normalize the variables by centering and scaling to ensure that the data is appropriately prepared for modeling.
+
+\subsection{K-Fold Cross Validation}
+## K-Fold Cross Validation
+
+```{r}
+smartphones_folds <- vfold_cv(smartphones_train, v = 10, strata = has_5g)
+smartphones_folds
+```
+
+K-fold cross-validation is a technique used in machine learning to assess the performance and generalization ability of a model. It helps to assess how well the model generalizes to new and unseen data by dividing the dataset into k subsets or folds. The model is trained and evaluated k times, each time using a different fold as the test set and the remaining folds as the training set.
+
+We used `vfold_cv()` to create 10 folds from the training set. We also stratified the data based on the response variable, `has_5g`, which ensures each subset or fold in the cross-validation process maintains a representative distribution.
+
+\section{Building Prediction Models}
+# Building Prediction Models
+
+Now it is finally time to build our models!
+
+I chose ROC AUC as my performance metric because it effectively measures the efficiency of a binary classification model, especially when the data is not perfectly balanced. ROC AUC is determined by the area under the Receiver Operating Characteristic (ROC) curve, which illustrates the performance of a binary classifier across various discrimination thresholds. This metric is particularly valuable for evaluating models across different classification thresholds, providing insights into the trade-off between sensitivity and specificity. A higher ROC AUC value, closer to 1, indicates better performance. Thus, suggesting that the model can effectively distinguish between the two classes. A ROC AUC value of 0.5 indicates that the model performs the same as random chance.
+
+\subsection{Model Process}
+## Model Process
+
+I set up models for K-Nearest Neighbor, Logistic Regression, Linear Discriminant Analysis, Quadratic Discriminant Analysis, Random Forest, Lasso Regression, Support Vector Machine, and Decision Tree in which these models followed this general process:\
+*1)* set up the model by specifying the type of model, setting the engine, and setting the mode as classification \
+*2)* set up the workflow, add the new model, and add our smartphones recipe \
+*3)* set up the tuning grid with the parameters we want and set ranges for desired levels of tuning \
+*4)* tune the model with hyperparameters of our choice \
+*5)* select the most accurate model from the tuning grid and finalize workflow with the tuning parameters\
+*6)* fit that model with our workflow to our smartphones training data \
+*7)* save our results to an RDA file to be loaded back into the project file \
+\
+*(don't have to use steps 3 and 5 for Logistic Regression, LDA, and QDA)*
+
+\section{Prediction Model Results}
+# Prediction Model Results
+
+Since running our models took up a lot of time, each model was saved into RDA files to then be loaded back in to explore the results. 
+
+```{r}
+load("~/Documents/PSTAT131/131_FinalProject/RDA/smartphones_qda.rda")
+load("~/Documents/PSTAT131/131_FinalProject/RDA/smartphones_lda.rda")
+load("~/Documents/PSTAT131/131_FinalProject/RDA/smartphones_knn.rda")
+load("~/Documents/PSTAT131/131_FinalProject/RDA/smartphones_logistic_regression.rda")
+load("~/Documents/PSTAT131/131_FinalProject/RDA/smartphones_lasso_regression.rda")
+load("~/Documents/PSTAT131/131_FinalProject/RDA/smartphones_random_forest.rda")
+load("~/Documents/PSTAT131/131_FinalProject/RDA/smartphones_decision_tree.rda")
+load("~/Documents/PSTAT131/131_FinalProject/RDA/smartphones_support_vector_machine.rda")
+```
+
+\subsection{Visualizing Model Results}
+## Visualizing Model Results
+
+To visualize our results, we will use the `autoplot` function in R which allows us to analyze certain parameters on our metric of choice: `roc_auc`.
+
+### K Nearest Neighbor
+
+```{r, eval=F}
+knn <- nearest_neighbor(neighbors = tune()) %>% 
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+knn_wkflow <- workflow()%>%
+  add_model(knn) %>%
+  add_recipe(smartphones_recipe)
+
+knn_grid <- grid_regular(neighbors(range = c(1, 10)),
+                         levels = 10)
+
+knn_fit <- tune_grid(
+  knn_wkflow,
+  resamples = smartphones_folds, 
+  grid = knn_grid
+)
+
+best_knn <- select_best(knn_fit, metric="roc_auc")
+
+knn_final <- finalize_workflow(knn_wkflow, best_knn)
+smartphones_knn_final <- fit(knn_final, data = smartphones_train)
+
+save(smartphones_knn_final, knn_fit, file = "~/Documents/PSTAT131/131_FinalProject/RDA/smartphones_knn.rda")
+```
+
+
+```{r, fig.width=8}
+autoplot(knn_fit, metric = "roc_auc")
+```
+
+K Nearest Neighbor is a supervised machine learning algorithm working off similarity, assuming similar data points are located close to each other in the feature space. In our plot, we saw that the greater number of nearest neighbors, the more accurate our model is. The highest ROC AUC was a little above 0.88, which is already pretty effective. However, it may not be as effective as our other models since KNN tends to do worse if there are too many predictors or dimensions. 
+
+### Quadratic Discriminant Analysis
+
+```{r, eval=F}
+qda_mod <- discrim_quad() %>% 
+  set_mode("classification") %>% 
+  set_engine("MASS")
+
+qda_wkflow <- workflow() %>% 
+  add_model(qda_mod) %>% 
+  add_recipe(smartphones_recipe)
+
+qda_fit <- fit(qda_wkflow, smartphones_train)
+predict(qda_fit, new_data = smartphones_train, type="prob")
+
+
+qda_kfold_fit <- fit_resamples(qda_wkflow, smartphones_folds, control = control_grid(save_pred = TRUE))
+collect_metrics(qda_kfold_fit)
+
+smartphones_roc_qda <- augment(qda_fit, smartphones_train)
+
+save(qda_fit, qda_kfold_fit, smartphones_roc_qda, 
+     file = "~/Documents/PSTAT131/131_FinalProject/RDA/smartphones_qda.rda")
+```
+
+```{r, fig.width=8}
+smartphones_roc_qda %>%
+  roc_curve(has_5g, .pred_No) %>%
+  autoplot()
+```
+
+Quadratic Discriminant Analysis is a classification algorithm used for modeling and classifying data. It is similar to Linear Discriminant Analysis (LDA) but instead can be more accurate as it is used to find a non-linear boundary between our classifiers. By plotting our ROC Curve above for our QDA model, we can see it performed relatively well, however when compared to our other models it did relatively average.
+
+### Random Forest
+
+```{r, eval=F}
+rand_forest_spec <- rand_forest(mtry = tune(), trees = tune(), min_n = tune()) %>%
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("classification")
+
+rand_forest_wf <- workflow() %>%
+  add_recipe(smartphones_recipe) %>%
+  add_model(rand_forest_spec)
+
+rf_grid <- grid_regular(mtry(range = c(2, 14)), trees(range = c(2, 10)), 
+                                  min_n(range = c(2, 8)), levels = 8)
+rf_tune_res_auc <- tune_grid(
+  rand_forest_wf, 
+  resamples = smartphones_folds, 
+  grid = rf_grid, 
+  metrics = metric_set(yardstick::roc_auc)
+)
+
+best_rf_auc <- dplyr::arrange(collect_metrics(rf_tune_res_auc), desc(mean))
+head(best_rf_auc)
+
+best_rf_complexity_auc <- select_best(rf_tune_res_auc, metric="roc_auc")
+
+
+rf_final_auc <- finalize_workflow(rand_forest_wf, best_rf_complexity_auc)
+rf_final_fit_auc <- fit(rf_final_auc, data = smartphones_train)
+
+rf_tune_res_accuracy <- tune_grid(
+  rand_forest_wf, 
+  resamples = smartphones_folds, 
+  grid = rf_grid, 
+  metrics = metric_set(accuracy)
+)
+
+best_rf_accuracy <- dplyr::arrange(collect_metrics(rf_tune_res_accuracy), desc(mean))
+head(best_rf_accuracy)
+
+
+best_rf_complexity_accuracy <- select_best(rf_tune_res_accuracy, metric="accuracy")
+
+rf_final_accuracy <- finalize_workflow(rand_forest_wf, best_rf_complexity_accuracy)
+rf_final_fit_accuracy <- fit(rf_final_accuracy, data = smartphones_train)
+
+
+save(rf_tune_res_auc, rf_final_fit_auc, best_rf_auc,
+     rf_tune_res_accuracy, rf_final_fit_accuracy, best_rf_accuracy, 
+     file = "~/Documents/PSTAT131/131_FinalProject/RDA/smartphones_random_forest.rda")
+```
+
+
+```{r, fig.width=8}
+autoplot(rf_tune_res_auc)
+```
+
+A random forest model is a supervised machine learning technique incorporating multiple decision trees. Decision tree models can over-fit training data, but random forest models minimize this problem by averaging each tree’s prediction to make a final output. In our random forest, we tuned three different parameters: `mtry`:  number of predictors used to to sample while splitting into the tree models, `trees`: the number of trees simulated in the model, `min_n`: minimum number of observations required to create a terminal node during the tree-building process.
+
+We see the ROC AUC scores vary depending on the number of trees, but there is a general trend in which more trees lead to higher ROC AUC scores. The optimal node size seems to be 6, with 6 trees and 7 predictors. As the number of predictors increase, so did our accuracy and as the number of trees increased, the ROC AUC also typically increased. Using 10 trees allowed for greater visualization of the relation between more trees and higher ROC AUC.
+
+### Support Vector Machine
+
+```{r, eval=F}
+svm_rbf_spec <- svm_rbf() %>%
+  set_mode("classification") %>%
+  set_engine("kernlab")
+
+svm_rbf_wf <- workflow() %>%
+  add_recipe(smartphones_recipe) %>%
+  add_model(svm_rbf_spec %>% set_args(cost = tune()))
+
+
+svm_param_grid <- grid_regular(cost(range = c(-10, 5)), levels = 10)
+
+svm_auc_tune_res <- tune_grid(
+  svm_rbf_wf, 
+  resamples = smartphones_folds, 
+  grid = svm_param_grid,
+  metrics = metric_set(yardstick::roc_auc)
+)
+
+best_svm_auc <- dplyr::arrange(collect_metrics(svm_auc_tune_res), desc(mean))
+head(best_svm_auc)
+
+best_svm_complexity_auc <- select_best(svm_auc_tune_res, metric="roc_auc")
+
+svm_final_auc <- finalize_workflow(svm_rbf_wf, best_svm_complexity_auc)
+svm_final_fit_auc <- fit(svm_final_auc, data = smartphones_train)
+
+svm_accuracy_tune_res <- tune_grid(
+  svm_rbf_wf, 
+  resamples = smartphones_folds, 
+  grid = svm_param_grid,
+  metrics = metric_set(accuracy)
+)
+
+best_svm_accuracy <- dplyr::arrange(collect_metrics(svm_accuracy_tune_res), desc(mean))
+head(best_svm_accuracy)
+
+best_svm_complexity_accuracy <- select_best(svm_accuracy_tune_res)
+
+svm_final_accuracy <- finalize_workflow(svm_rbf_wf, best_svm_complexity_accuracy)
+svm_final_fit_accuracy <- fit(svm_final_accuracy, data = smartphones_train)
+
+save(svm_auc_tune_res, best_svm_auc, svm_final_fit_auc, 
+     best_svm_accuracy, svm_final_fit_accuracy,
+     file = "~/Documents/PSTAT131/131_FinalProject/RDA/smartphones_support_vector_machine.rda")
+```
+
+
+```{r, fig.width=8}
+autoplot(svm_auc_tune_res)
+```
+
+Support Vector Machine (SVM) is a supervised machine learning algorithm particularly well-suited for binary classification tasks. In SVM, each observation is plotted in an n-dimensional space, where n represents a particular coordinate of our features. The primary objective is to identify a hyperplane that best separates the two classes. This hyperplane is determined by support vectors, which are the data points closest to the decision boundary. Evaluating the Support Vector Machine model in our project, we observed that it performed exceptionally well, even surpassing the performance of the random forest model by 0.002.
+
+
+
+```{r, eval=F, include=F}
+# LOGISTIC REGRESSION
+log_reg <- logistic_reg() %>% 
+  set_engine("glm") %>%
+  set_mode("classification")
+
+log_wkflow <- workflow() %>% 
+  add_model(log_reg) %>% 
+  add_recipe(smartphones_recipe)
+
+log_fit <- fit(log_wkflow, smartphones_train)
+predict(log_fit, new_data = smartphones_train, type="prob")
+
+
+log_kfold_fit <- fit_resamples(log_wkflow, smartphones_folds)
+collect_metrics(log_kfold_fit)
+
+
+save(log_fit, log_kfold_fit,
+     file = "~/Documents/PSTAT131/131_FinalProject/RDA/smartphones_logistic_regression.rda")
+```
+
+
+
+```{r, eval=F, include=F}
+#Linear Discriminant Analysis
+lda_mod <- discrim_linear() %>% 
+  set_mode("classification") %>% 
+  set_engine("MASS")
+
+lda_wkflow <- workflow() %>% 
+  add_model(lda_mod) %>% 
+  add_recipe(smartphones_recipe)
+
+lda_fit <- fit(lda_wkflow, smartphones_train)
+predict(lda_fit, new_data = smartphones_train, type="prob")
+
+lda_kfold_fit <- fit_resamples(lda_wkflow, smartphones_folds)
+collect_metrics(lda_kfold_fit)
+
+
+save(lda_fit, lda_kfold_fit, 
+      file = "~/Documents/PSTAT131/131_FinalProject/RDA/smartphones_lda.rda")
+```
+
+
+```{r, eval=F, include=F}
+# Lasso Regression
+lasso_spec <- multinom_reg(penalty = tune(), mixture = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("glmnet")
+
+lasso_wkflow <- workflow() %>% 
+  add_recipe(smartphones_recipe) %>% 
+  add_model(lasso_spec)
+
+
+lasso_pen_mix_grid <- grid_regular(penalty(range = c(-5, 5)), mixture(range = c(0,1)), levels = 10)
+lasso_pen_mix_grid
+
+
+lasso_fit_res <- tune_grid(
+  lasso_wkflow,
+  resamples = smartphones_folds, 
+  grid = lasso_pen_mix_grid
+)
+
+collect_metrics(lasso_fit_res)
+best_lasso_penalty <- select_best(lasso_fit_res, metric = "roc_auc")
+best_lasso_penalty
+
+lasso_final <- finalize_workflow(lasso_wkflow, best_lasso_penalty)
+lasso_final_fit <- fit(lasso_final, data = smartphones_train)
+
+save(lasso_fit_res, lasso_final_fit, 
+     file = "~/Documents/PSTAT131/131_FinalProject/RDA/smartphones_lasso_regression.rda")
+```
+
+
+
+```{r, eval=F, include=F}
+# Decision Tree
+dec_tree_spec <- decision_tree() %>%
+  set_mode("classification") %>%
+  set_engine("rpart")
+
+dec_tree_wf <- workflow() %>%
+  add_recipe(smartphones_recipe) %>%
+  add_model(dec_tree_spec %>% set_args(cost_complexity = tune())) 
+
+
+dt_param_grid <- grid_regular(cost_complexity(range = c(-3, -1)), levels = 10)
+
+dt_tune_res <- tune_grid(
+  dec_tree_wf, 
+  resamples = smartphones_folds, 
+  grid = dt_param_grid, 
+  metrics = metric_set(yardstick::roc_auc)
+)
+
+best_pruned_tree <- dplyr::arrange(collect_metrics(dt_tune_res), desc(mean))
+best_pruned_tree
+
+dt_best_complexity <- select_best(dt_tune_res)
+
+dt_final <- finalize_workflow(dec_tree_wf, dt_best_complexity)
+dt_final_tune <- fit(dt_final, data = smartphones_train)
+
+save(dt_tune_res, dt_final_tune,
+     file = "~/Documents/PSTAT131/131_FinalProject/RDA/smartphones_decision_tree.rda")
+```
+\subsection{Model Accuracies}
+## Model Accuracies
+
+To summarize the best ROC AUC values, we will create a tibble that displays the estimated final roc_auc value for each fitted model.
+
+```{r}
+knn_auc <- augment(smartphones_knn_final, new_data = smartphones_train) %>%
+  roc_auc(has_5g, .pred_No) %>%
+  select(.estimate)
+
+logreg_auc <- augment(log_fit, new_data = smartphones_train) %>%
+ roc_auc(has_5g, .pred_No) %>%
+  select(.estimate)
+
+lda_auc <- augment(lda_fit, new_data = smartphones_train) %>%
+  roc_auc(has_5g, .pred_No) %>%
+  select(.estimate)
+
+qda_auc <- augment(qda_fit, new_data = smartphones_train) %>%
+  roc_auc(has_5g, .pred_No) %>%
+  select(.estimate)
+
+random_forest_auc <- augment(rf_final_fit_auc, new_data = smartphones_train) %>%
+  roc_auc(has_5g, .pred_No) %>%
+  select(.estimate)
+
+lasso_auc <- augment(lasso_final_fit, new_data = smartphones_train) %>%
+  roc_auc(has_5g, .pred_No) %>%
+  select(.estimate)
+
+svm_auc <- augment(svm_final_fit_auc, new_data = smartphones_train) %>%
+  roc_auc(has_5g, .pred_No) %>%
+  select(.estimate)
+
+decision_tree_auc <- augment(dt_final_tune, new_data = smartphones_train) %>%
+  roc_auc(has_5g, .pred_No) %>%
+  select(.estimate)
+
+
+smartphones_roc_aucs <- c(knn_auc$.estimate,
+                       logreg_auc$.estimate,
+                           lda_auc$.estimate,
+                      qda_auc$.estimate,
+                           lasso_auc$.estimate,
+                           decision_tree_auc$.estimate,
+                           random_forest_auc$.estimate,
+                           svm_auc$.estimate)
+
+smartphones_mod_names <- c("KNN",
+  "Logistic Regression",
+            "LDA",
+            "QDA",
+            "Lasso",
+            "Decision Tree",
+            "Random Forest",
+            "SVM")
+```
+
+
+```{r}
+smartphones_results <- tibble(Model = smartphones_mod_names,
+                             ROC_AUC = smartphones_roc_aucs)
+
+smartphones_results <- smartphones_results %>% 
+  dplyr::arrange(-smartphones_roc_aucs)
+
+smartphones_results
+```
+\
+To help visualize these results, we can also use a bar plot.
+
+```{r, fig.width=8}
+smartphones_bar_plot <- ggplot(smartphones_results, aes(x = Model, y = ROC_AUC)) + geom_bar( stat = "identity", width = 0.2, fill = "#B0E0E6", color="#20B2AA") + labs(title = "Performance of Our Models") + theme_minimal() + coord_cartesian(ylim = c(0.8, 1)) 
+
+smartphones_bar_plot
+```
+
+As we can see Random Forest performed the best overall with a ROC AUC score of 0.9985469. The Support Vector Machine followed close behind at 0.9981982. Since this is only fitted on the training data we will then perform these models on our testing data we have yet to use. For this next step we will be moving forward with both our Random Forest model. 
+
+\section{Results of Best Model}
+# Results of Best Models
+
+## Random Forest
+Now that we concluded our best model is a Random Forest model, we can continue analyzing its results. Even with best overall performance, we want to examine how it performs on new data.
+
+### The Best Model ....
+
+is RF Model 035! This model performed the best overall.
+
+```{r}
+show_best(rf_tune_res_auc, metric = "roc_auc") %>%
+  select(-.estimator, .config) %>%
+  slice(1)
+```
+Now, we can use it to fit our testing data and discover its actual performance in predicting if a smartphone possesses 5G connectivity.
+
+### Final ROC AUC Results
+
+```{r}
+smartphones_rf_roc_auc <- augment(rf_final_fit_auc, new_data = smartphones_test, type = 'prob') %>%
+  roc_auc(has_5g, .pred_No) %>%
+  select(.estimate)
+
+smartphones_rf_roc_auc
+```
+We can now find our model #035’s true ROC AUC performance results on our testing data. Our model's ROC AUC performance results show a ROC AUC Score of 0.8879049, which is relatively high! Although it is lower than the training data ROC AUC score, which indicates that the model might have slightly overfitted to the training data, it still demonstrates strong predictive power on unseen data. This high ROC AUC score suggests that our model is effective at distinguishing between smartphones with and without 5G connectivity.
+
+### Visualizing ROC AUC Results
+
+```{r, fig.width=8}
+rf_roc_curve <- augment(rf_final_fit_auc, new_data = smartphones_test, type = 'prob') %>%
+  roc_curve(has_5g, .pred_No) %>%
+  autoplot()
+
+rf_roc_curve
+```
+
+To visualize our AUC score, we plot our ROC curve. The higher up and to the left the curve is, the better the model’s AUC will be. Wile our curve does not perfectly resemble a right angle, it still sits in the top left which means our model has a relatively high true positive rate and a low false positive rate.
+
+\section{Time to Test Our Model}
+# Time to Test Our Model
+
+Now it is time to see how effective our model is at predicting if a smartphone has 5G connectivity or not. I have collected data from two smartphones in the dataset with one of them being having 5G and the other being a non 5G model. We want to see if our model will correctly classify each of them.
+
+## 5G Model
+
+```{r}
+smartphone_yes_5g <- data.frame(
+  price = 54999,    
+  has_nfc = 1,
+  has_ir_blaster = 0,
+  processor_speed = 3.20,
+  battery_capacity = 5000,
+  fast_charging = 100,
+  internal_memory = 256,
+  screen_size = 6.70,
+  refresh_rate = 120,
+  num_rear_cameras = 3,
+  primary_camera_rear = 50,
+  primary_camera_front = 16.0,
+  resolution_width = 1440,
+  resolution_height = 3216
+)
+
+predict(rf_final_fit_auc, smartphone_yes_5g, type = "class")
+```
+
+We can see that our model correctly classified this smartphone as having 5G connectivity!
+
+## Non 5G Model
+
+```{r}
+smartphone_no_5g <- data.frame(
+  price = 9999,    
+  has_nfc = 0,
+  has_ir_blaster = 0,
+  processor_speed = 2.30,
+  battery_capacity = 5000,
+  fast_charging = 10,
+  internal_memory = 32,
+  screen_size = 6.51,
+  refresh_rate = 60,
+  num_rear_cameras = 2,
+  primary_camera_rear = 13,
+  primary_camera_front = 5.0,
+  resolution_width = 720,
+  resolution_height = 1600
+)
+
+predict(rf_final_fit_auc, smartphone_no_5g, type = "class")
+```
+Our model correctly predicted the non 5G model. Success!
+
+
+### Final Model Accuracy 
+
+```{r}
+augment(rf_final_fit_accuracy, new_data = smartphones_test, type = 'prob') %>%
+  accuracy(has_5g, .pred_class) %>%
+  select(.estimate)
+```
+Our Random Forest model was able to predict 5G smartphones in our testing data with about 75.5% accuracy. 
+
+\section{Visualizing Model Performance}
+# Visualizing Model Performance
+
+We can also visualize the performance of our random model using a variable importance plot and confusion matrix.
+
+## Variable Importance Graph
+
+```{r, fig.width=8}
+library(vip)
+rf_final_fit_auc %>%
+  extract_fit_engine() %>%
+  vip(aesthetics = list(fill = "#B0E0E6", color="#20B2AA"), num_features= 14)
+
+```
+\
+We can see that the most important variables in predicting 5G connectivity or not is price, refresh rate, and processor speed which makes sense.  
+
+
+```{r, warning=F, fig.width=8}
+final_fit_train_rf <- augment(rf_final_fit_auc, 
+                               smartphones_test) %>% 
+  select(has_5g, starts_with(".pred"))
+
+conf_mat(final_fit_train_rf, truth = has_5g,
+         .pred_class) %>% 
+  autoplot(type = "heatmap") + scale_fill_gradient(low = "#E6E6FA")
+```
+We can see the best-performing Random Forest model has done a good job as there are only a handful of missclassifications in the testing set. It is interesting to note that our model is more keen to missclassifying 5G models.
+
+\section{Conclusion}
+# Conclusion
+
+After thorough research and testing, we found that the Random Forest model emerged as the most proficient in predicting smartphone 5G capability. We also discovered that price, refresh rate, and processor speed are important variables when predicting 5G capability. 
+
+Looking ahead, potential extensions to this project could involve the application of more advanced techniques such as neural networks. By leveraging the power of neural networks, we could explore more intricate relationships within the data and potentially achieve even higher predictive accuracy. Additionally, integrating image recognition capabilities into the model could open up new possibilities, allowing for the identification of smartphone features directly from product images. 
+
+As we continue to explore the intersections of technology and human experience, we are reminded of the boundless opportunities for innovation and discovery that lie ahead. I am excited to hopfully continue pursuing a career in tech!
+\
+\
+\
+```{r echo=FALSE, out.width = "75%", fig.align = "center"}
+knitr::include_graphics("/Users/kira1/Downloads/JxUA.gif")
+```
+
+\subsection{References}
+## References
+- Smartphones_Dataset: (https://www.kaggle.com/datasets/informrohit1/smartphones-dataset)
+- Dr. Coburn's PSTAT 131 labs, homeworks, lecture slides, and provided example projects
+
+
+
